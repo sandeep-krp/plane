@@ -10,9 +10,9 @@ name: Build images
 # deployments should reference makeplane/plane-live:<tag> / makeplane/plane-proxy:<tag>
 # directly.
 #
-# This workflow only builds and locally tags images — it does not push anywhere
-# yet. See the commented-out "Push image" step in each job for where a registry
-# login/push step goes once a registry (ECR, GHCR, etc.) is chosen.
+# Images are pushed to GitHub Container Registry under this repo's own account
+# (ghcr.io/<owner>/plane-<service>), authenticated with the workflow's own
+# built-in GITHUB_TOKEN — no external registry secrets needed.
 
 on:
   push:
@@ -25,6 +25,9 @@ on:
         required: true
         type: string
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
   resolve-tag:
     name: Resolve tags
@@ -32,6 +35,7 @@ jobs:
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
+      image_owner: ${{ steps.resolve.outputs.image_owner }}
     steps:
       - id: resolve
         run: |
@@ -40,55 +44,91 @@ jobs:
           UPSTREAM_TAG="${RELEASE_TAG%%-oidc*}"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "upstream_tag=${UPSTREAM_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image_owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
   build-web:
     name: Build web
     needs: resolve-tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
-      - name: Build image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
         run: |
-          docker build -f apps/web/Dockerfile.web \
-            -t "plane-web:${{ needs.resolve-tag.outputs.release_tag }}" .
-      # TODO: once a registry is chosen, add a login step and:
-      #   docker tag plane-web:<tag> <registry>/plane-web:<tag>
-      #   docker push <registry>/plane-web:<tag>
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-web:${{ needs.resolve-tag.outputs.release_tag }}"
+          docker build -f apps/web/Dockerfile.web -t "$IMAGE" .
+          docker push "$IMAGE"
 
   build-admin:
     name: Build admin
     needs: resolve-tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
-      - name: Build image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
         run: |
-          docker build -f apps/admin/Dockerfile.admin \
-            -t "plane-admin:${{ needs.resolve-tag.outputs.release_tag }}" .
-      # TODO: push step (see build-web)
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-admin:${{ needs.resolve-tag.outputs.release_tag }}"
+          docker build -f apps/admin/Dockerfile.admin -t "$IMAGE" .
+          docker push "$IMAGE"
 
   build-space:
     name: Build space
     needs: resolve-tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
-      - name: Build image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
         run: |
-          docker build -f apps/space/Dockerfile.space \
-            -t "plane-space:${{ needs.resolve-tag.outputs.release_tag }}" .
-      # TODO: push step (see build-web)
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-space:${{ needs.resolve-tag.outputs.release_tag }}"
+          docker build -f apps/space/Dockerfile.space -t "$IMAGE" .
+          docker push "$IMAGE"
 
   build-api:
     name: Build api (overlay)
     needs: resolve-tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
-      - name: Build image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
         run: |
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-api:${{ needs.resolve-tag.outputs.release_tag }}"
           docker build -f docker/api-overlay.Dockerfile \
             --build-arg PLANE_BACKEND_TAG="${{ needs.resolve-tag.outputs.upstream_tag }}" \
-            -t "plane-api:${{ needs.resolve-tag.outputs.release_tag }}" \
+            -t "$IMAGE" \
             apps/api
-      # TODO: push step (see build-web)
+          docker push "$IMAGE"
