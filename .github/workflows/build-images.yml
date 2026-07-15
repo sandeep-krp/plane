@@ -1,14 +1,15 @@
 name: Build images
 
-# Builds only the images this fork's OIDC feature actually touches:
+# Builds all six production images under one release tag, so every component
+# can be deployed from the same version string:
 #   - web, admin, space: built from source (unchanged upstream Dockerfiles;
 #     these are prebuilt static/server bundles, so there's no overlay shortcut).
 #   - api: a thin overlay on top of upstream's published makeplane/plane-backend
 #     image (see docker/api-overlay.Dockerfile).
-#
-# live and proxy are not built here at all — this fork doesn't touch them, so
-# deployments should reference makeplane/plane-live:<tag> / makeplane/plane-proxy:<tag>
-# directly.
+#   - live, proxy: built from source too. This fork doesn't change either of
+#     them, but building them from this repo's own tree (rather than pointing
+#     at upstream's images under a different tag) keeps all six images on one
+#     consistent tag.
 #
 # Images are pushed to GitHub Container Registry under this repo's own account
 # (ghcr.io/<owner>/plane-<service>), authenticated with the workflow's own
@@ -131,4 +132,46 @@ jobs:
             --build-arg PLANE_BACKEND_TAG="${{ needs.resolve-tag.outputs.upstream_tag }}" \
             -t "$IMAGE" \
             apps/api
+          docker push "$IMAGE"
+
+  build-live:
+    name: Build live
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-live:${{ needs.resolve-tag.outputs.release_tag }}"
+          docker build -f apps/live/Dockerfile.live -t "$IMAGE" .
+          docker push "$IMAGE"
+
+  build-proxy:
+    name: Build proxy
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-proxy:${{ needs.resolve-tag.outputs.release_tag }}"
+          docker build -f apps/proxy/Dockerfile.ce -t "$IMAGE" apps/proxy
           docker push "$IMAGE"

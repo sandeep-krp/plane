@@ -49,16 +49,19 @@ and session creation all work together.
 
 ### Docker images
 
-Prebuilt images are published to GitHub Container Registry, tagged
-`<upstream-version>-oidc.<n>` (e.g. `v1.3.1-oidc.1`):
+Prebuilt images for all six components are published to GitHub Container Registry
+under one consistent tag, `<upstream-version>-oidc.<n>` (e.g. `v1.3.1-oidc.1`):
 
 - `ghcr.io/sandeep-krp/plane-web`
 - `ghcr.io/sandeep-krp/plane-admin`
 - `ghcr.io/sandeep-krp/plane-space`
 - `ghcr.io/sandeep-krp/plane-api`
+- `ghcr.io/sandeep-krp/plane-live`
+- `ghcr.io/sandeep-krp/plane-proxy`
 
-For `live` and `proxy` — untouched by this fork — use upstream's own images directly:
-`makeplane/plane-live` / `makeplane/plane-proxy` at the matching version.
+`live` and `proxy` aren't touched by the OIDC feature, but are built from this fork's
+own source (rather than pointing at upstream's images under a different tag) so every
+component can be deployed from the same version string.
 
 ### Building from source
 
