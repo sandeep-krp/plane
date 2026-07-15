@@ -63,6 +63,21 @@ services:
     ports:
       - "5432:5432"
 
+  # Local-only OIDC identity provider for exercising the OIDC login flow end-to-end.
+  # Not part of the production/test compose files. See apps/api/tests/oidc/setup_keycloak.py
+  # for programmatically creating a realm/client/user against this instance.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    command: start-dev
+    networks:
+      - dev_env
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+
   api:
     build:
       context: ./apps/api
