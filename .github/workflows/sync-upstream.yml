@@ -131,5 +131,5 @@ jobs:
           gh pr create \
             --title "Sync OIDC fork onto upstream ${NEW_TAG}" \
             --body "$BODY" \
-            --base preview \
+            --base main \
             --head "sync/${NEW_TAG}"
