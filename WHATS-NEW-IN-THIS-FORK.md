@@ -52,12 +52,19 @@ and session creation all work together.
 Prebuilt images for all six components are published to GitHub Container Registry
 under one consistent tag, `<upstream-version>-oidc.<n>` (e.g. `v1.3.1-oidc.1`):
 
-- `ghcr.io/sandeep-krp/plane-web`
+- `ghcr.io/sandeep-krp/plane-frontend`
 - `ghcr.io/sandeep-krp/plane-admin`
 - `ghcr.io/sandeep-krp/plane-space`
-- `ghcr.io/sandeep-krp/plane-api`
+- `ghcr.io/sandeep-krp/plane-backend`
 - `ghcr.io/sandeep-krp/plane-live`
 - `ghcr.io/sandeep-krp/plane-proxy`
+
+Names match upstream's own image naming (per their [Helm chart](https://github.com/makeplane/helm-charts/tree/main/charts/plane-ce)
+and CLI deployment config) — `plane-frontend` for `apps/web`, `plane-backend` for
+`apps/api`. `plane-backend` also covers the `worker`/`beat-worker`/`migrator` roles,
+same as upstream: run the same image with a different startup command
+(`./bin/docker-entrypoint-{api,worker,beat,migrator}.sh`) rather than building a
+separate image — upstream doesn't publish a distinct "worker" image either.
 
 `live` and `proxy` aren't touched by the OIDC feature, but are built from this fork's
 own source (rather than pointing at upstream's images under a different tag) so every

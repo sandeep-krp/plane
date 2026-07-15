@@ -48,7 +48,7 @@ jobs:
           echo "image_owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
   build-web:
-    name: Build web
+    name: Build frontend
     needs: resolve-tag
     runs-on: ubuntu-latest
     permissions:
@@ -64,7 +64,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push image
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-web:${{ needs.resolve-tag.outputs.release_tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-frontend:${{ needs.resolve-tag.outputs.release_tag }}"
           docker build -f apps/web/Dockerfile.web -t "$IMAGE" .
           docker push "$IMAGE"
 
@@ -111,7 +111,7 @@ jobs:
           docker push "$IMAGE"
 
   build-api:
-    name: Build api (overlay)
+    name: Build backend (overlay)
     needs: resolve-tag
     runs-on: ubuntu-latest
     permissions:
@@ -127,7 +127,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push image
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-api:${{ needs.resolve-tag.outputs.release_tag }}"
+          IMAGE="${{ env.REGISTRY }}/${{ needs.resolve-tag.outputs.image_owner }}/plane-backend:${{ needs.resolve-tag.outputs.release_tag }}"
           docker build -f docker/api-overlay.Dockerfile \
             --build-arg PLANE_BACKEND_TAG="${{ needs.resolve-tag.outputs.upstream_tag }}" \
             -t "$IMAGE" \

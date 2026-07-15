@@ -8,7 +8,7 @@
 # Build (from repo root):
 #   docker build -f docker/api-overlay.Dockerfile \
 #     --build-arg PLANE_BACKEND_TAG=v1.3.1 \
-#     -t plane-api:v1.3.1-oidc.1 apps/api
+#     -t plane-backend:v1.3.1-oidc.1 apps/api
 
 ARG PLANE_BACKEND_TAG
 FROM makeplane/plane-backend:${PLANE_BACKEND_TAG}
