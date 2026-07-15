@@ -1,3 +1,9 @@
+> [!IMPORTANT]
+> **This is a fork of [makeplane/plane](https://github.com/makeplane/plane)**, maintained at [sandeep-krp/plane](https://github.com/sandeep-krp/plane).
+> It tracks upstream Plane release-for-release and adds one feature on top: **generic OIDC (OpenID Connect) SSO login**, with real ID-token signature verification (JWKS) rather than the opaque `id_token` handling upstream's other OAuth providers use.
+>
+> See [**WHATS-NEW-IN-THIS-FORK.md**](./WHATS-NEW-IN-THIS-FORK.md) for exactly what's added, how to configure it, and which upstream release this fork is currently based on. Everything else in this README describes upstream Plane unchanged.
+
 <br /><br />
 
 <p align="center">
