@@ -1,0 +1,135 @@
+name: Sync with upstream
+
+# Checks makeplane/plane for a new release tag, and if found, cherry-picks this
+# fork's OIDC commit onto it, fixes up the migration number if upstream has
+# since added its own migrations, runs the OIDC test suite, and opens a PR for
+# review. Never merges or pushes images itself.
+#
+# NOTE: OIDC_COMMIT below must be updated if that commit is ever amended or
+# rebased (its SHA will change).
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # every Monday
+  workflow_dispatch:
+
+env:
+  OIDC_COMMIT: bbe6ceed2d56add691437d4f82b96961a7dfed8f
+  UPSTREAM_REPO: https://github.com/makeplane/plane.git
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream --tags
+
+      - name: Check for a new upstream release
+        id: check
+        run: |
+          LATEST_UPSTREAM_TAG="$(git tag --list 'v*' --merged upstream/preview --sort=-v:refname | head -n1)"
+          CURRENT_TAG="$(cat .upstream-version)"
+          echo "latest_upstream_tag=${LATEST_UPSTREAM_TAG}" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST_UPSTREAM_TAG" = "$CURRENT_TAG" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create sync branch and cherry-pick OIDC commit
+        if: steps.check.outputs.up_to_date == 'false'
+        id: cherry-pick
+        continue-on-error: true
+        run: |
+          NEW_TAG="${{ steps.check.outputs.latest_upstream_tag }}"
+          BRANCH="sync/${NEW_TAG}"
+          git checkout -b "$BRANCH" "$NEW_TAG"
+          git cherry-pick "$OIDC_COMMIT"
+
+      - name: Renumber OIDC migration if it now collides
+        if: steps.check.outputs.up_to_date == 'false' && steps.cherry-pick.outcome == 'success'
+        run: |
+          MIGRATIONS_DIR="apps/api/plane/db/migrations"
+          OIDC_MIGRATION="$(ls "$MIGRATIONS_DIR" | grep account_add_oidc_provider)"
+          OIDC_NUMBER="${OIDC_MIGRATION%%_*}"
+          HIGHEST_OTHER="$(ls "$MIGRATIONS_DIR" | grep -v account_add_oidc_provider | grep -E '^[0-9]{4}_' | sort | tail -n1)"
+          HIGHEST_NUMBER="${HIGHEST_OTHER%%_*}"
+
+          if [ "$OIDC_NUMBER" -le "$HIGHEST_NUMBER" ]; then
+            NEXT_NUMBER=$(printf "%04d" $((10#$HIGHEST_NUMBER + 1)))
+            NEW_NAME="${NEXT_NUMBER}_account_add_oidc_provider.py"
+            HIGHEST_MODULE="${HIGHEST_OTHER%.py}"
+
+            git mv "$MIGRATIONS_DIR/$OIDC_MIGRATION" "$MIGRATIONS_DIR/$NEW_NAME"
+            sed -i "s/\"[0-9]\{4\}_[a-z0-9_]*\")\],$/\"${HIGHEST_MODULE}\")],/" "$MIGRATIONS_DIR/$NEW_NAME" || true
+            echo "Renumbered OIDC migration to ${NEW_NAME} — verify its dependencies tuple by hand." >> "$GITHUB_STEP_SUMMARY"
+            git add -A
+            git commit -m "Renumber OIDC migration after upstream sync"
+          fi
+
+      - name: Set up Python
+        if: steps.check.outputs.up_to_date == 'false' && steps.cherry-pick.outcome == 'success'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.x"
+          cache: "pip"
+          cache-dependency-path: "apps/api/requirements.txt"
+
+      - name: Install API + test dependencies
+        if: steps.check.outputs.up_to_date == 'false' && steps.cherry-pick.outcome == 'success'
+        run: |
+          cd apps/api
+          pip install -r requirements.txt -r requirements/test.txt
+
+      - name: Run OIDC + full auth test suite
+        if: steps.check.outputs.up_to_date == 'false' && steps.cherry-pick.outcome == 'success'
+        working-directory: apps/api
+        env:
+          POSTGRES_USER: plane
+          POSTGRES_PASSWORD: plane
+          POSTGRES_DB: plane
+          DATABASE_URL: postgres://plane:plane@localhost:5432/plane
+          SECRET_KEY: sync-workflow-test-secret
+        run: |
+          pytest plane/tests/unit/authentication/test_oidc_provider.py \
+                 plane/tests/contract/app/test_oidc_authentication.py \
+                 plane/tests/ -k authentication
+
+      - name: Update .upstream-version
+        if: steps.check.outputs.up_to_date == 'false' && steps.cherry-pick.outcome == 'success'
+        run: |
+          echo "${{ steps.check.outputs.latest_upstream_tag }}" > .upstream-version
+          git add .upstream-version
+          git commit -m "Bump synced upstream version to ${{ steps.check.outputs.latest_upstream_tag }}"
+
+      - name: Push sync branch
+        if: steps.check.outputs.up_to_date == 'false'
+        run: git push origin "sync/${{ steps.check.outputs.latest_upstream_tag }}" --force
+
+      - name: Open PR
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_TAG="${{ steps.check.outputs.latest_upstream_tag }}"
+          if [ "${{ steps.cherry-pick.outcome }}" = "success" ]; then
+            BODY="Cherry-picked the OIDC commit onto ${NEW_TAG} cleanly and the OIDC + auth test suite passed. Review the diff, then merge and tag a release (e.g. \`${NEW_TAG}-oidc.1\`)."
+          else
+            BODY="Cherry-picking the OIDC commit onto ${NEW_TAG} hit conflicts — this branch has them unresolved. Resolve manually, re-run tests, then merge."
+          fi
+          gh pr create \
+            --title "Sync OIDC fork onto upstream ${NEW_TAG}" \
+            --body "$BODY" \
+            --base preview \
+            --head "sync/${NEW_TAG}"

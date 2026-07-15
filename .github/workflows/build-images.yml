@@ -1,0 +1,94 @@
+name: Build images
+
+# Builds only the images this fork's OIDC feature actually touches:
+#   - web, admin, space: built from source (unchanged upstream Dockerfiles;
+#     these are prebuilt static/server bundles, so there's no overlay shortcut).
+#   - api: a thin overlay on top of upstream's published makeplane/plane-backend
+#     image (see docker/api-overlay.Dockerfile).
+#
+# live and proxy are not built here at all — this fork doesn't touch them, so
+# deployments should reference makeplane/plane-live:<tag> / makeplane/plane-proxy:<tag>
+# directly.
+#
+# This workflow only builds and locally tags images — it does not push anywhere
+# yet. See the commented-out "Push image" step in each job for where a registry
+# login/push step goes once a registry (ECR, GHCR, etc.) is chosen.
+
+on:
+  push:
+    tags:
+      - "v*-oidc.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v1.3.1-oidc.1)"
+        required: true
+        type: string
+
+jobs:
+  resolve-tag:
+    name: Resolve tags
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      upstream_tag: ${{ steps.resolve.outputs.upstream_tag }}
+    steps:
+      - id: resolve
+        run: |
+          RELEASE_TAG="${{ inputs.tag || github.ref_name }}"
+          # Our tags look like <upstream-tag>-oidc.<n>, e.g. v1.3.1-oidc.1
+          UPSTREAM_TAG="${RELEASE_TAG%%-oidc*}"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "upstream_tag=${UPSTREAM_TAG}" >> "$GITHUB_OUTPUT"
+
+  build-web:
+    name: Build web
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        run: |
+          docker build -f apps/web/Dockerfile.web \
+            -t "plane-web:${{ needs.resolve-tag.outputs.release_tag }}" .
+      # TODO: once a registry is chosen, add a login step and:
+      #   docker tag plane-web:<tag> <registry>/plane-web:<tag>
+      #   docker push <registry>/plane-web:<tag>
+
+  build-admin:
+    name: Build admin
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        run: |
+          docker build -f apps/admin/Dockerfile.admin \
+            -t "plane-admin:${{ needs.resolve-tag.outputs.release_tag }}" .
+      # TODO: push step (see build-web)
+
+  build-space:
+    name: Build space
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        run: |
+          docker build -f apps/space/Dockerfile.space \
+            -t "plane-space:${{ needs.resolve-tag.outputs.release_tag }}" .
+      # TODO: push step (see build-web)
+
+  build-api:
+    name: Build api (overlay)
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build image
+        run: |
+          docker build -f docker/api-overlay.Dockerfile \
+            --build-arg PLANE_BACKEND_TAG="${{ needs.resolve-tag.outputs.upstream_tag }}" \
+            -t "plane-api:${{ needs.resolve-tag.outputs.release_tag }}" \
+            apps/api
+      # TODO: push step (see build-web)
