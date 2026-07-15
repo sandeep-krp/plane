@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 env:
-  OIDC_COMMIT: bbe6ceed2d56add691437d4f82b96961a7dfed8f
+  OIDC_COMMIT: c536507a510eb5c6a92003496d3a4b01d14695bd
   UPSTREAM_REPO: https://github.com/makeplane/plane.git
 
 jobs:
