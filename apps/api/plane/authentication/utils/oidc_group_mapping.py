@@ -18,6 +18,9 @@ def parse_group_role_mapping(raw_json):
     Returns a list of {"group": str, "workspace_slug": str, "role": int} dicts.
     Invalid JSON or invalid individual entries are logged and skipped rather than
     raising, so a misconfigured mapping never blocks login.
+
+    A "group" value of "*" is a wildcard: the caller treats it as always-matching, a
+    default/fallback role for that workspace when no other entry matches.
     """
     if not raw_json:
         return []

@@ -56,7 +56,13 @@ JSON array of `{group, workspace_slug, role}` entries, e.g.:
 ```
 
 - `OIDC_GROUPS_CLAIM` names the userinfo/ID-token claim holding the user's groups (varies
-  by IdP — Keycloak, Okta, and Azure AD all name this differently).
+  by IdP — Keycloak, Okta, and Azure AD all name this differently). It may be a
+  dot-separated nested path, e.g. `resource_access.plane.roles` for Keycloak's
+  client-roles shape.
+- A `group` of `"*"` is a wildcard that always matches — a default/fallback role for
+  users who don't match any other entry for that workspace (still combined with the
+  "highest role wins" rule below, so e.g. `admin` + `member` + `*` entries naturally give
+  admin > member > guest priority with a guaranteed fallback).
 - A matching group **auto-joins** the user to the mapped workspace if they aren't already
   a member (this is what makes it useful beyond the existing invite flow).
 - The mapping **never downgrades** a role a human admin already set on `WorkspaceMember` —
