@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+import json
 import time
 import uuid
 from unittest.mock import MagicMock, patch
@@ -13,7 +14,7 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
-from plane.db.models import User
+from plane.db.models import User, Workspace, WorkspaceMember
 from plane.license.models import Instance, InstanceConfiguration
 
 
@@ -176,23 +177,29 @@ class _FakeResponse:
         pass
 
 
-def _configure_oidc(enable_profile_sync=True):
+def _create_user(email):
+    return User.objects.create(email=email, username=uuid.uuid4().hex)
+
+
+def _configure_oidc(groups_mapping=(), enable_role_sync=True, enable_profile_sync=False):
     for key, value in (
         ("OIDC_ISSUER", ISSUER),
         ("OIDC_CLIENT_ID", CLIENT_ID),
         ("OIDC_CLIENT_SECRET", CLIENT_SECRET),
         ("ENABLE_OIDC_SYNC", "1" if enable_profile_sync else "0"),
+        ("ENABLE_OIDC_ROLE_SYNC", "1" if enable_role_sync else "0"),
+        ("OIDC_GROUP_ROLE_MAPPING", json.dumps(list(groups_mapping))),
     ):
         InstanceConfiguration.objects.update_or_create(
             key=key, defaults={"value": value, "is_encrypted": False, "category": "OIDC"}
         )
 
 
-def _run_oidc_login(django_client, email, sub="idp-user-1", given_name=None, family_name=None):
+def _run_oidc_login(django_client, email, groups=(), sub="idp-user-1", given_name=None, family_name=None):
     """Drives the real /auth/oidc/callback/ view end-to-end: real RSA-signed ID token,
     mocked network boundary only (discovery/userinfo/token-exchange HTTP calls and the
-    JWKS client), so the full Adapter.complete_login_or_signup() path runs for real
-    against the test database."""
+    JWKS client), so the full Adapter.complete_login_or_signup() path — including role
+    sync — runs for real against the test database."""
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
 
@@ -216,7 +223,7 @@ def _run_oidc_login(django_client, email, sub="idp-user-1", given_name=None, fam
         if url == f"{ISSUER}/.well-known/openid-configuration":
             return _FakeResponse(DISCOVERY_DOCUMENT)
         if url == f"{ISSUER}/userinfo":
-            userinfo = {"sub": sub, "email": email, "email_verified": True}
+            userinfo = {"sub": sub, "email": email, "email_verified": True, "groups": list(groups)}
             if given_name is not None:
                 userinfo["given_name"] = given_name
             if family_name is not None:
@@ -240,6 +247,76 @@ def _run_oidc_login(django_client, email, sub="idp-user-1", given_name=None, fam
     ), patch("plane.authentication.provider.oauth.oidc.PyJWKClient", return_value=jwks_client):
         url = reverse("oidc-callback")
         return django_client.get(url, {"code": "test-code", "state": "expected-state"}, follow=False)
+
+
+@pytest.mark.contract
+class TestOIDCGroupRoleSync:
+    @pytest.mark.django_db
+    def test_matching_group_auto_joins_workspace_with_mapped_role(self, django_client, setup_instance):
+        owner = _create_user("owner@example.com")
+        workspace = Workspace.objects.create(name="Acme", slug="acme", owner=owner)
+        _configure_oidc([{"group": "engineering", "workspace_slug": "acme", "role": "admin"}])
+
+        response = _run_oidc_login(django_client, "new-user@example.com", groups=["engineering"])
+
+        assert response.status_code == 302
+        user = User.objects.get(email="new-user@example.com")
+        member = WorkspaceMember.objects.get(workspace=workspace, member=user)
+        assert member.role == 20
+
+    @pytest.mark.django_db
+    def test_no_matching_group_leaves_membership_untouched(self, django_client, setup_instance):
+        owner = _create_user("owner@example.com")
+        Workspace.objects.create(name="Acme", slug="acme", owner=owner)
+        _configure_oidc([{"group": "engineering", "workspace_slug": "acme", "role": "admin"}])
+
+        response = _run_oidc_login(django_client, "outsider@example.com", groups=["marketing"])
+
+        assert response.status_code == 302
+        user = User.objects.get(email="outsider@example.com")
+        assert not WorkspaceMember.objects.filter(member=user).exists()
+
+    @pytest.mark.django_db
+    def test_existing_higher_role_is_never_downgraded(self, django_client, setup_instance):
+        owner = _create_user("owner@example.com")
+        workspace = Workspace.objects.create(name="Acme", slug="acme", owner=owner)
+        user = _create_user("existing-admin@example.com")
+        WorkspaceMember.objects.create(workspace=workspace, member=user, role=20)
+        _configure_oidc([{"group": "engineering", "workspace_slug": "acme", "role": "member"}])
+
+        response = _run_oidc_login(django_client, "existing-admin@example.com", groups=["engineering"])
+
+        assert response.status_code == 302
+        member = WorkspaceMember.objects.get(workspace=workspace, member=user)
+        assert member.role == 20
+
+    @pytest.mark.django_db
+    def test_existing_lower_role_is_upgraded(self, django_client, setup_instance):
+        owner = _create_user("owner@example.com")
+        workspace = Workspace.objects.create(name="Acme", slug="acme", owner=owner)
+        user = _create_user("existing-guest@example.com")
+        WorkspaceMember.objects.create(workspace=workspace, member=user, role=5)
+        _configure_oidc([{"group": "engineering", "workspace_slug": "acme", "role": "member"}])
+
+        response = _run_oidc_login(django_client, "existing-guest@example.com", groups=["engineering"])
+
+        assert response.status_code == 302
+        member = WorkspaceMember.objects.get(workspace=workspace, member=user)
+        assert member.role == 15
+
+    @pytest.mark.django_db
+    def test_role_sync_disabled_ignores_matching_group(self, django_client, setup_instance):
+        owner = _create_user("owner@example.com")
+        workspace = Workspace.objects.create(name="Acme", slug="acme", owner=owner)
+        _configure_oidc(
+            [{"group": "engineering", "workspace_slug": "acme", "role": "admin"}], enable_role_sync=False
+        )
+
+        response = _run_oidc_login(django_client, "disabled-sync@example.com", groups=["engineering"])
+
+        assert response.status_code == 302
+        user = User.objects.get(email="disabled-sync@example.com")
+        assert not WorkspaceMember.objects.filter(workspace=workspace, member=user).exists()
 
 
 @pytest.mark.contract
