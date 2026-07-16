@@ -7,12 +7,13 @@
 import { useState } from "react";
 import { isEmpty } from "lodash-es";
 import Link from "next/link";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 // plane internal packages
 import { API_BASE_URL } from "@plane/constants";
 import { Button, getButtonStyling } from "@plane/propel/button";
 import { TOAST_TYPE, setToast } from "@plane/propel/toast";
 import type { IFormattedInstanceConfiguration, TInstanceOidcAuthenticationConfigurationKeys } from "@plane/types";
+import { TextArea, ToggleSwitch } from "@plane/ui";
 // components
 import { CodeBlock } from "@/components/common/code-block";
 import { ConfirmDiscardModal } from "@/components/common/confirm-discard-modal";
@@ -55,6 +56,9 @@ export function InstanceOidcConfigForm(props: Props) {
       OIDC_CLIENT_SECRET: config["OIDC_CLIENT_SECRET"],
       OIDC_DISPLAY_NAME: config["OIDC_DISPLAY_NAME"] || "SSO",
       ENABLE_OIDC_SYNC: config["ENABLE_OIDC_SYNC"] || "0",
+      OIDC_GROUPS_CLAIM: config["OIDC_GROUPS_CLAIM"] || "groups",
+      ENABLE_OIDC_ROLE_SYNC: config["ENABLE_OIDC_ROLE_SYNC"] || "0",
+      OIDC_GROUP_ROLE_MAPPING: config["OIDC_GROUP_ROLE_MAPPING"] || "[]",
     },
   });
 
@@ -102,6 +106,20 @@ export function InstanceOidcConfigForm(props: Props) {
       error: Boolean(errors.OIDC_DISPLAY_NAME),
       required: false,
     },
+    {
+      key: "OIDC_GROUPS_CLAIM",
+      type: "text",
+      label: "Groups claim",
+      description: (
+        <>
+          Name of the userinfo/ID-token claim holding the user&apos;s groups or roles. Varies by identity provider
+          &mdash; check your IdP&apos;s documentation if unsure.
+        </>
+      ),
+      placeholder: "groups",
+      error: Boolean(errors.OIDC_GROUPS_CLAIM),
+      required: false,
+    },
   ];
 
   const OIDC_SERVICE_FIELD: TCopyField[] = [
@@ -129,6 +147,9 @@ export function InstanceOidcConfigForm(props: Props) {
         OIDC_CLIENT_SECRET: response.find((item) => item.key === "OIDC_CLIENT_SECRET")?.value,
         OIDC_DISPLAY_NAME: response.find((item) => item.key === "OIDC_DISPLAY_NAME")?.value,
         ENABLE_OIDC_SYNC: response.find((item) => item.key === "ENABLE_OIDC_SYNC")?.value,
+        OIDC_GROUPS_CLAIM: response.find((item) => item.key === "OIDC_GROUPS_CLAIM")?.value,
+        ENABLE_OIDC_ROLE_SYNC: response.find((item) => item.key === "ENABLE_OIDC_ROLE_SYNC")?.value,
+        OIDC_GROUP_ROLE_MAPPING: response.find((item) => item.key === "OIDC_GROUP_ROLE_MAPPING")?.value,
       });
     } catch (err) {
       console.error(err);
@@ -167,6 +188,60 @@ export function InstanceOidcConfigForm(props: Props) {
               />
             ))}
             <ControllerSwitch control={control} field={OIDC_FORM_SWITCH_FIELD} />
+
+            <div className="pt-4 text-18 font-medium">Map identity provider groups to workspace roles</div>
+            <div className="flex items-center justify-between gap-1">
+              <h4 className="text-sm text-custom-text-300">Enable group &rarr; workspace role mapping on login</h4>
+              <Controller
+                control={control}
+                name="ENABLE_OIDC_ROLE_SYNC"
+                render={({ field: { value, onChange } }) => {
+                  const isOn = value === "1";
+                  return <ToggleSwitch value={isOn} onChange={() => onChange(isOn ? "0" : "1")} size="sm" />;
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <h4 className="text-13 text-tertiary">Group &rarr; role mapping</h4>
+              <Controller
+                control={control}
+                name="OIDC_GROUP_ROLE_MAPPING"
+                rules={{
+                  validate: (value) => {
+                    if (!value) return true;
+                    try {
+                      const parsed = JSON.parse(value);
+                      if (!Array.isArray(parsed)) return "Must be a JSON array.";
+                      return true;
+                    } catch {
+                      return "Must be valid JSON.";
+                    }
+                  },
+                }}
+                render={({ field: { value, onChange, ref } }) => (
+                  <TextArea
+                    id="OIDC_GROUP_ROLE_MAPPING"
+                    name="OIDC_GROUP_ROLE_MAPPING"
+                    ref={ref}
+                    value={value}
+                    onChange={onChange}
+                    hasError={Boolean(errors.OIDC_GROUP_ROLE_MAPPING)}
+                    placeholder={'[{"group": "engineering", "workspace_slug": "acme", "role": "admin"}]'}
+                    className="font-mono min-h-24 w-full resize-none text-13"
+                  />
+                )}
+              />
+              {errors.OIDC_GROUP_ROLE_MAPPING?.message && (
+                <p className="text-11 text-danger-primary">{errors.OIDC_GROUP_ROLE_MAPPING.message}</p>
+              )}
+              <p className="pt-0.5 text-11 text-tertiary">
+                JSON array of <CodeBlock darkerShade>{"{group, workspace_slug, role}"}</CodeBlock> entries (role is one
+                of <CodeBlock darkerShade>admin</CodeBlock>, <CodeBlock darkerShade>member</CodeBlock>,{" "}
+                <CodeBlock darkerShade>guest</CodeBlock>). A matching group auto-joins the user to that workspace and
+                never downgrades a role a human admin already set.
+              </p>
+            </div>
+
             <div className="flex flex-col gap-1 pt-4">
               <div className="flex items-center gap-4">
                 <Button
