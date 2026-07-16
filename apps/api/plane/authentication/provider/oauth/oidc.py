@@ -26,6 +26,20 @@ logger = logging.getLogger("plane.authentication")
 DISCOVERY_CACHE_TIMEOUT = 60 * 60  # 1 hour
 
 
+def _resolve_claim_path(data, path):
+    """Resolve a dot-separated claim path against a nested claims dict, e.g.
+    "resource_access.plane.roles" for Keycloak-style nested client-role claims.
+    A path with no dots is just a plain top-level key lookup."""
+    value = data
+    for segment in path.split("."):
+        if not isinstance(value, dict):
+            return None
+        value = value.get(segment)
+        if value is None:
+            return None
+    return value
+
+
 def _get_discovery_document(issuer):
     """Fetch (and cache) the OIDC discovery document for the given issuer."""
     cache_key = f"oidc_discovery_document:{issuer}"
@@ -205,10 +219,12 @@ class OidcOAuthProvider(OauthAdapter):
     def __extract_groups(self, user_info_response):
         """Read the configured groups/roles claim from the userinfo response, falling
         back to the verified ID token (some IdPs only include it there depending on
-        which scopes were granted to the userinfo endpoint)."""
-        raw_groups = user_info_response.get(self.groups_claim)
+        which scopes were granted to the userinfo endpoint). The claim name may be a
+        dot-separated path (e.g. "resource_access.plane.roles") for IdPs like Keycloak
+        that nest client roles rather than exposing a top-level claim."""
+        raw_groups = _resolve_claim_path(user_info_response, self.groups_claim)
         if raw_groups is None:
-            raw_groups = self.__id_token_claims.get(self.groups_claim)
+            raw_groups = _resolve_claim_path(self.__id_token_claims, self.groups_claim)
 
         if raw_groups is None:
             return []

@@ -160,20 +160,22 @@ class Adapter:
     def sync_workspace_roles(self, user):
         """Auto-join/upgrade the user's workspace role based on the IdP groups claim and
         the configured OIDC_GROUP_ROLE_MAPPING. Never downgrades a role a human admin
-        already set; a matched group only assigns a role on first join or raises it."""
+        already set; a matched group only assigns a role on first join or raises it.
+        A mapping entry with group "*" always matches (a default/fallback role), even
+        when the user has no groups claim at all."""
         groups = self.user_data.get("user", {}).get("groups") or []
-        if not groups:
-            return
 
         (raw_mapping,) = get_configuration_value([
             {"key": "OIDC_GROUP_ROLE_MAPPING", "default": os.environ.get("OIDC_GROUP_ROLE_MAPPING", "[]")}
         ])
         mappings = parse_group_role_mapping(raw_mapping)
+        if not mappings:
+            return
 
         # Highest role wins when multiple matched groups target the same workspace.
         roles_by_workspace_slug = {}
         for mapping in mappings:
-            if mapping["group"] not in groups:
+            if mapping["group"] != "*" and mapping["group"] not in groups:
                 continue
             slug = mapping["workspace_slug"]
             roles_by_workspace_slug[slug] = max(roles_by_workspace_slug.get(slug, 0), mapping["role"])

@@ -305,6 +305,44 @@ class TestOIDCGroupRoleSync:
         assert member.role == 15
 
     @pytest.mark.django_db
+    def test_wildcard_entry_assigns_default_role_when_no_group_matches(self, django_client, setup_instance):
+        owner = _create_user("owner@example.com")
+        workspace = Workspace.objects.create(name="Acme", slug="acme", owner=owner)
+        _configure_oidc(
+            [
+                {"group": "admin", "workspace_slug": "acme", "role": "admin"},
+                {"group": "member", "workspace_slug": "acme", "role": "member"},
+                {"group": "*", "workspace_slug": "acme", "role": "guest"},
+            ]
+        )
+
+        response = _run_oidc_login(django_client, "unmapped-role@example.com", groups=["viewer"])
+
+        assert response.status_code == 302
+        user = User.objects.get(email="unmapped-role@example.com")
+        member = WorkspaceMember.objects.get(workspace=workspace, member=user)
+        assert member.role == 5
+
+    @pytest.mark.django_db
+    def test_wildcard_entry_does_not_override_higher_matched_role(self, django_client, setup_instance):
+        owner = _create_user("owner@example.com")
+        workspace = Workspace.objects.create(name="Acme", slug="acme", owner=owner)
+        _configure_oidc(
+            [
+                {"group": "admin", "workspace_slug": "acme", "role": "admin"},
+                {"group": "member", "workspace_slug": "acme", "role": "member"},
+                {"group": "*", "workspace_slug": "acme", "role": "guest"},
+            ]
+        )
+
+        response = _run_oidc_login(django_client, "priority-admin@example.com", groups=["admin"])
+
+        assert response.status_code == 302
+        user = User.objects.get(email="priority-admin@example.com")
+        member = WorkspaceMember.objects.get(workspace=workspace, member=user)
+        assert member.role == 20
+
+    @pytest.mark.django_db
     def test_role_sync_disabled_ignores_matching_group(self, django_client, setup_instance):
         owner = _create_user("owner@example.com")
         workspace = Workspace.objects.create(name="Acme", slug="acme", owner=owner)

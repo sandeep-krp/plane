@@ -113,7 +113,8 @@ export function InstanceOidcConfigForm(props: Props) {
       description: (
         <>
           Name of the userinfo/ID-token claim holding the user&apos;s groups or roles. Varies by identity provider
-          &mdash; check your IdP&apos;s documentation if unsure.
+          &mdash; check your IdP&apos;s documentation if unsure. Supports dot-separated nested paths, e.g.{" "}
+          <CodeBlock darkerShade>resource_access.plane.roles</CodeBlock> for Keycloak client roles.
         </>
       ),
       placeholder: "groups",
@@ -238,7 +239,9 @@ export function InstanceOidcConfigForm(props: Props) {
                 JSON array of <CodeBlock darkerShade>{"{group, workspace_slug, role}"}</CodeBlock> entries (role is one
                 of <CodeBlock darkerShade>admin</CodeBlock>, <CodeBlock darkerShade>member</CodeBlock>,{" "}
                 <CodeBlock darkerShade>guest</CodeBlock>). A matching group auto-joins the user to that workspace and
-                never downgrades a role a human admin already set.
+                never downgrades a role a human admin already set. Use <CodeBlock darkerShade>*</CodeBlock> as the group
+                to set a default/fallback role &mdash; e.g. admin + member + <CodeBlock darkerShade>*</CodeBlock>{" "}
+                entries give admin &gt; member &gt; guest priority with everyone else defaulting to guest.
               </p>
             </div>
 

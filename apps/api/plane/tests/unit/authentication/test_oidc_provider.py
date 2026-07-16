@@ -381,6 +381,26 @@ class TestOidcGroupsClaimExtraction:
         )
         assert provider.user_data["user"]["groups"] == ["admin-role"]
 
+    def test_groups_claim_supports_nested_dot_path(self, db, django_request, rsa_keypair):
+        """Keycloak-style client roles: resource_access.<client>.roles, nested in the ID
+        token rather than exposed as a top-level claim."""
+        for key, value in (
+            ("OIDC_ISSUER", ISSUER),
+            ("OIDC_CLIENT_ID", CLIENT_ID),
+            ("OIDC_CLIENT_SECRET", CLIENT_SECRET),
+            ("OIDC_GROUPS_CLAIM", "resource_access.plane.roles"),
+        ):
+            InstanceConfiguration.objects.create(key=key, value=value, is_encrypted=False, category="OIDC")
+        private_key, public_key = rsa_keypair
+        provider = self._login(
+            django_request,
+            private_key,
+            public_key,
+            {"sub": "user-123", "email": "user@example.com"},
+            id_token_overrides={"resource_access": {"plane": {"roles": ["admin", "member"]}}},
+        )
+        assert provider.user_data["user"]["groups"] == ["admin", "member"]
+
     def test_groups_fallback_to_id_token_claim(self, oidc_config, django_request, rsa_keypair):
         private_key, public_key = rsa_keypair
         provider = self._login(

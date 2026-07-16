@@ -49,6 +49,10 @@ class TestParseGroupRoleMapping:
         raw = json.dumps(["engineering"])
         assert parse_group_role_mapping(raw) == []
 
+    def test_wildcard_group_entry_is_parsed_like_any_other(self):
+        raw = json.dumps([{"group": "*", "workspace_slug": "acme", "role": "guest"}])
+        assert parse_group_role_mapping(raw) == [{"group": "*", "workspace_slug": "acme", "role": 5}]
+
     def test_valid_entries_survive_alongside_invalid_ones(self):
         raw = json.dumps(
             [
