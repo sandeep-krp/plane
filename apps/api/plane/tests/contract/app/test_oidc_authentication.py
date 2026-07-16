@@ -2,16 +2,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+import time
 import uuid
 from unittest.mock import MagicMock, patch
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from plane.db.models import User
-from plane.license.models import Instance
+from plane.license.models import Instance, InstanceConfiguration
 
 
 @pytest.fixture
@@ -148,3 +151,119 @@ class TestOIDCOauthInitiateSpaceEndpoint:
 
         assert response.status_code == 302
         assert response.url == auth_url
+
+
+ISSUER = "https://idp.example.com"
+CLIENT_ID = "plane-client"
+CLIENT_SECRET = "plane-secret"
+
+DISCOVERY_DOCUMENT = {
+    "authorization_endpoint": f"{ISSUER}/authorize",
+    "token_endpoint": f"{ISSUER}/token",
+    "userinfo_endpoint": f"{ISSUER}/userinfo",
+    "jwks_uri": f"{ISSUER}/jwks",
+}
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        pass
+
+
+def _configure_oidc(enable_profile_sync=True):
+    for key, value in (
+        ("OIDC_ISSUER", ISSUER),
+        ("OIDC_CLIENT_ID", CLIENT_ID),
+        ("OIDC_CLIENT_SECRET", CLIENT_SECRET),
+        ("ENABLE_OIDC_SYNC", "1" if enable_profile_sync else "0"),
+    ):
+        InstanceConfiguration.objects.update_or_create(
+            key=key, defaults={"value": value, "is_encrypted": False, "category": "OIDC"}
+        )
+
+
+def _run_oidc_login(django_client, email, sub="idp-user-1", given_name=None, family_name=None):
+    """Drives the real /auth/oidc/callback/ view end-to-end: real RSA-signed ID token,
+    mocked network boundary only (discovery/userinfo/token-exchange HTTP calls and the
+    JWKS client), so the full Adapter.complete_login_or_signup() path runs for real
+    against the test database."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+
+    now = int(time.time())
+    id_token = jwt.encode(
+        {
+            "iss": ISSUER,
+            "aud": CLIENT_ID,
+            "sub": sub,
+            "iat": now,
+            "exp": now + 300,
+            "email": email,
+            "nonce": "expected-nonce",
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    def get_side_effect(url, *args, **kwargs):
+        if url == f"{ISSUER}/.well-known/openid-configuration":
+            return _FakeResponse(DISCOVERY_DOCUMENT)
+        if url == f"{ISSUER}/userinfo":
+            userinfo = {"sub": sub, "email": email, "email_verified": True}
+            if given_name is not None:
+                userinfo["given_name"] = given_name
+            if family_name is not None:
+                userinfo["family_name"] = family_name
+            return _FakeResponse(userinfo)
+        raise AssertionError(f"unexpected GET {url}")
+
+    signing_key = MagicMock()
+    signing_key.key = public_key
+    jwks_client = MagicMock()
+    jwks_client.get_signing_key_from_jwt.return_value = signing_key
+
+    session = django_client.session
+    session["state"] = "expected-state"
+    session["oidc_nonce"] = "expected-nonce"
+    session.save()
+
+    with patch("plane.authentication.provider.oauth.oidc.requests.get", side_effect=get_side_effect), patch(
+        "plane.authentication.provider.oauth.oidc.requests.post",
+        return_value=_FakeResponse({"access_token": "test-access-token", "id_token": id_token, "expires_in": 3600}),
+    ), patch("plane.authentication.provider.oauth.oidc.PyJWKClient", return_value=jwks_client):
+        url = reverse("oidc-callback")
+        return django_client.get(url, {"code": "test-code", "state": "expected-state"}, follow=False)
+
+
+@pytest.mark.contract
+class TestOIDCProfileSyncOnRepeatLogin:
+    """Regression test for the previously-inverted `is_signup` check in
+    Adapter.complete_login_or_signup(): ENABLE_OIDC_SYNC must re-sync profile fields on
+    every repeat login, not only (accidentally) at first-time account creation."""
+
+    @pytest.mark.django_db
+    def test_repeat_login_resyncs_changed_profile_fields(self, django_client, setup_instance):
+        _configure_oidc(enable_profile_sync=True)
+
+        first = _run_oidc_login(
+            django_client, "sync-user@example.com", given_name="Old", family_name="Name"
+        )
+        assert first.status_code == 302
+        user = User.objects.get(email="sync-user@example.com")
+        assert user.first_name == "Old"
+        assert user.last_name == "Name"
+
+        second = _run_oidc_login(
+            django_client, "sync-user@example.com", given_name="New", family_name="Person"
+        )
+        assert second.status_code == 302
+        user.refresh_from_db()
+        assert user.first_name == "New"
+        assert user.last_name == "Person"
