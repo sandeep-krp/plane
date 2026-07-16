@@ -73,11 +73,15 @@ export enum EAuthenticationErrorCodes {
   // Oauth
   OAUTH_NOT_CONFIGURED = "5104",
   GOOGLE_NOT_CONFIGURED = "5105",
+  OIDC_NOT_CONFIGURED = "5106",
+  OIDC_OAUTH_PROVIDER_ERROR = "5107",
+  OIDC_INVALID_ID_TOKEN = "5108",
   GITHUB_NOT_CONFIGURED = "5110",
   GITLAB_NOT_CONFIGURED = "5111",
   GOOGLE_OAUTH_PROVIDER_ERROR = "5115",
   GITHUB_OAUTH_PROVIDER_ERROR = "5120",
   GITLAB_OAUTH_PROVIDER_ERROR = "5121",
+  OAUTH_PROVIDER_UNVERIFIED_EMAIL = "5124",
   // Reset Password
   INVALID_PASSWORD_TOKEN = "5125",
   EXPIRED_PASSWORD_TOKEN = "5130",
@@ -262,6 +266,18 @@ const errorCodeMessages: {
     title: `Google not configured`,
     message: () => `Google not configured. Please contact your administrator.`,
   },
+  [EAuthenticationErrorCodes.OIDC_NOT_CONFIGURED]: {
+    title: `OIDC not configured`,
+    message: () => `OIDC not configured. Please contact your administrator.`,
+  },
+  [EAuthenticationErrorCodes.OIDC_OAUTH_PROVIDER_ERROR]: {
+    title: `OIDC OAuth provider error`,
+    message: () => `OIDC OAuth provider error. Please try again.`,
+  },
+  [EAuthenticationErrorCodes.OIDC_INVALID_ID_TOKEN]: {
+    title: `Invalid OIDC ID token`,
+    message: () => `Invalid OIDC ID token. Please try again.`,
+  },
   [EAuthenticationErrorCodes.GITHUB_NOT_CONFIGURED]: {
     title: `GitHub not configured`,
     message: () => `GitHub not configured. Please contact your administrator.`,
@@ -281,6 +297,11 @@ const errorCodeMessages: {
   [EAuthenticationErrorCodes.GITLAB_OAUTH_PROVIDER_ERROR]: {
     title: `GitLab OAuth provider error`,
     message: () => `GitLab OAuth provider error. Please try again.`,
+  },
+  [EAuthenticationErrorCodes.OAUTH_PROVIDER_UNVERIFIED_EMAIL]: {
+    title: `Email not verified`,
+    message: () =>
+      `Your OAuth provider account email is not verified. Please verify it with your provider and try again.`,
   },
 
   // Reset Password
@@ -403,11 +424,15 @@ export const authErrorHandler = (errorCode: EAuthenticationErrorCodes, email?: s
     EAuthenticationErrorCodes.EMAIL_CODE_ATTEMPT_EXHAUSTED_SIGN_UP,
     EAuthenticationErrorCodes.OAUTH_NOT_CONFIGURED,
     EAuthenticationErrorCodes.GOOGLE_NOT_CONFIGURED,
+    EAuthenticationErrorCodes.OIDC_NOT_CONFIGURED,
+    EAuthenticationErrorCodes.OIDC_OAUTH_PROVIDER_ERROR,
+    EAuthenticationErrorCodes.OIDC_INVALID_ID_TOKEN,
     EAuthenticationErrorCodes.GITHUB_NOT_CONFIGURED,
     EAuthenticationErrorCodes.GITLAB_NOT_CONFIGURED,
     EAuthenticationErrorCodes.GOOGLE_OAUTH_PROVIDER_ERROR,
     EAuthenticationErrorCodes.GITHUB_OAUTH_PROVIDER_ERROR,
     EAuthenticationErrorCodes.GITLAB_OAUTH_PROVIDER_ERROR,
+    EAuthenticationErrorCodes.OAUTH_PROVIDER_UNVERIFIED_EMAIL,
     EAuthenticationErrorCodes.INVALID_PASSWORD_TOKEN,
     EAuthenticationErrorCodes.EXPIRED_PASSWORD_TOKEN,
     EAuthenticationErrorCodes.INCORRECT_OLD_PASSWORD,

@@ -84,24 +84,37 @@ class TestOIDCOauthInitiateEndpoint:
 @pytest.mark.contract
 class TestOIDCCallbackEndpoint:
     @pytest.mark.django_db
-    def test_state_mismatch_rejected(self, django_client, setup_instance):
+    def test_state_mismatch_rejected(self, django_client, setup_instance, caplog):
         session = django_client.session
         session["state"] = "expected-state"
         session.save()
 
         url = reverse("oidc-callback")
-        response = django_client.get(url, {"code": "abc", "state": "wrong-state"}, follow=True)
+        with caplog.at_level("WARNING", logger="plane.authentication"):
+            response = django_client.get(url, {"code": "abc", "state": "wrong-state"}, follow=True)
         assert "OIDC_OAUTH_PROVIDER_ERROR" in response.redirect_chain[-1][0]
+
+        [record] = [r for r in caplog.records if "state mismatch" in r.message]
+        assert record.provider == "oidc"
+        assert record.code_present is True
+        assert record.state_present is True
+        assert record.expected_state_present is True
 
     @pytest.mark.django_db
-    def test_missing_code_rejected(self, django_client, setup_instance):
+    def test_missing_code_rejected(self, django_client, setup_instance, caplog):
         session = django_client.session
         session["state"] = "expected-state"
         session.save()
 
         url = reverse("oidc-callback")
-        response = django_client.get(url, {"state": "expected-state"}, follow=True)
+        with caplog.at_level("WARNING", logger="plane.authentication"):
+            response = django_client.get(url, {"state": "expected-state"}, follow=True)
         assert "OIDC_OAUTH_PROVIDER_ERROR" in response.redirect_chain[-1][0]
+
+        [record] = [r for r in caplog.records if "missing code" in r.message]
+        assert record.provider == "oidc"
+        assert record.code_present is False
+        assert record.state_present is True
 
     @pytest.mark.django_db
     @patch("plane.authentication.views.app.oidc.OidcOAuthProvider")
