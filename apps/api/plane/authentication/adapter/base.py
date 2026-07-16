@@ -22,7 +22,15 @@ from zxcvbn import zxcvbn
 from plane.bgtasks.user_activation_email_task import user_activation_email
 
 # Module imports
-from plane.db.models import FileAsset, Profile, User, WorkspaceMemberInvite
+from plane.authentication.utils.oidc_group_mapping import parse_group_role_mapping
+from plane.db.models import (
+    FileAsset,
+    Profile,
+    User,
+    Workspace,
+    WorkspaceMember,
+    WorkspaceMemberInvite,
+)
 from plane.license.utils.instance_value import get_configuration_value
 from plane.settings.storage import S3Storage
 from plane.utils.exception_logger import log_exception
@@ -136,6 +144,58 @@ class Adapter:
             (enabled,) = get_configuration_value([{"key": config_key, "default": os.environ.get(config_key, "0")}])
             return enabled == "1"
         return False
+
+    def check_role_sync_enabled(self):
+        """Check if IdP group -> workspace role sync is enabled. Only OIDC supplies a
+        groups claim today, so this is a dedicated toggle rather than a per-provider map
+        like check_sync_enabled — it's a materially bigger action (creates/modifies
+        workspace membership) than syncing profile fields, so it must be explicit."""
+        if self.provider != "oidc":
+            return False
+        (enabled,) = get_configuration_value([
+            {"key": "ENABLE_OIDC_ROLE_SYNC", "default": os.environ.get("ENABLE_OIDC_ROLE_SYNC", "0")}
+        ])
+        return enabled == "1"
+
+    def sync_workspace_roles(self, user):
+        """Auto-join/upgrade the user's workspace role based on the IdP groups claim and
+        the configured OIDC_GROUP_ROLE_MAPPING. Never downgrades a role a human admin
+        already set; a matched group only assigns a role on first join or raises it."""
+        groups = self.user_data.get("user", {}).get("groups") or []
+        if not groups:
+            return
+
+        (raw_mapping,) = get_configuration_value([
+            {"key": "OIDC_GROUP_ROLE_MAPPING", "default": os.environ.get("OIDC_GROUP_ROLE_MAPPING", "[]")}
+        ])
+        mappings = parse_group_role_mapping(raw_mapping)
+
+        # Highest role wins when multiple matched groups target the same workspace.
+        roles_by_workspace_slug = {}
+        for mapping in mappings:
+            if mapping["group"] not in groups:
+                continue
+            slug = mapping["workspace_slug"]
+            roles_by_workspace_slug[slug] = max(roles_by_workspace_slug.get(slug, 0), mapping["role"])
+
+        for workspace_slug, role in roles_by_workspace_slug.items():
+            workspace = Workspace.objects.filter(slug=workspace_slug).first()
+            if not workspace:
+                continue
+
+            workspace_member = WorkspaceMember.objects.filter(workspace=workspace, member=user).first()
+            if workspace_member is not None:
+                changed = False
+                if not workspace_member.is_active:
+                    workspace_member.is_active = True
+                    changed = True
+                if role > workspace_member.role:
+                    workspace_member.role = role
+                    changed = True
+                if changed:
+                    workspace_member.save()
+            else:
+                WorkspaceMember.objects.create(workspace=workspace, member=user, role=role)
 
     def download_and_upload_avatar(self, avatar_url, user):
         """
@@ -352,6 +412,10 @@ class Adapter:
 
         # Save user data
         user = self.save_user_data(user=user)
+
+        # Map IdP groups to workspace roles, independent of the profile-sync toggle above
+        if self.check_role_sync_enabled():
+            self.sync_workspace_roles(user=user)
 
         # Call callback if present
         if self.callback:

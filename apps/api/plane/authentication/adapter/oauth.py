@@ -112,6 +112,7 @@ class OauthAdapter(Adapter):
                 provider=self.provider,
                 provider_account_id=self.user_data.get("user").get("provider_id"),
             ).first()
+            groups = self.user_data.get("user", {}).get("groups", [])
             # Update the account if it exists
             if account:
                 account.access_token = self.token_data.get("access_token")
@@ -120,6 +121,7 @@ class OauthAdapter(Adapter):
                 account.refresh_token_expired_at = self.token_data.get("refresh_token_expired_at")
                 account.last_connected_at = timezone.now()
                 account.id_token = self.token_data.get("id_token", "")
+                account.metadata = {"groups": groups}
                 account.save()
             # Create a new account if it does not exist
             else:
@@ -133,6 +135,7 @@ class OauthAdapter(Adapter):
                     refresh_token_expired_at=self.token_data.get("refresh_token_expired_at"),
                     last_connected_at=timezone.now(),
                     id_token=self.token_data.get("id_token", ""),
+                    metadata={"groups": groups},
                 )
         except (DatabaseError, IntegrityError) as e:
             log_exception(e)

@@ -330,3 +330,91 @@ class TestOidcIdTokenVerification:
         with pytest.raises(AuthenticationException) as exc_info:
             provider.set_token_data()
         assert exc_info.value.error_message == "OIDC_INVALID_ID_TOKEN"
+
+
+@pytest.mark.unit
+class TestOidcGroupsClaimExtraction:
+    def _login(self, django_request, private_key, public_key, userinfo, id_token_overrides=None):
+        id_token = _signed_id_token(private_key, **(id_token_overrides or {}))
+
+        def get_side_effect(url, *args, **kwargs):
+            if url == f"{ISSUER}/.well-known/openid-configuration":
+                return FakeResponse(DISCOVERY_DOCUMENT)
+            if url == f"{ISSUER}/userinfo":
+                return FakeResponse(userinfo)
+            raise AssertionError(f"unexpected GET {url}")
+
+        with patch("plane.authentication.provider.oauth.oidc.requests.get", side_effect=get_side_effect), patch(
+            "plane.authentication.provider.oauth.oidc.requests.post",
+            return_value=FakeResponse({"access_token": "test-access-token", "id_token": id_token, "expires_in": 3600}),
+        ):
+            provider = OidcOAuthProvider(request=django_request, code="test-code", nonce="test-nonce")
+            with _mock_jwks(public_key):
+                provider.set_token_data()
+                provider.set_user_data()
+            return provider
+
+    def test_groups_extracted_from_userinfo_default_claim(self, oidc_config, django_request, rsa_keypair):
+        private_key, public_key = rsa_keypair
+        provider = self._login(
+            django_request,
+            private_key,
+            public_key,
+            {"sub": "user-123", "email": "user@example.com", "groups": ["team-a", "team-b"]},
+        )
+        assert provider.user_data["user"]["groups"] == ["team-a", "team-b"]
+
+    def test_groups_claim_name_configurable(self, db, django_request, rsa_keypair):
+        for key, value in (
+            ("OIDC_ISSUER", ISSUER),
+            ("OIDC_CLIENT_ID", CLIENT_ID),
+            ("OIDC_CLIENT_SECRET", CLIENT_SECRET),
+            ("OIDC_GROUPS_CLAIM", "roles"),
+        ):
+            InstanceConfiguration.objects.create(key=key, value=value, is_encrypted=False, category="OIDC")
+        private_key, public_key = rsa_keypair
+        provider = self._login(
+            django_request,
+            private_key,
+            public_key,
+            {"sub": "user-123", "email": "user@example.com", "roles": ["admin-role"]},
+        )
+        assert provider.user_data["user"]["groups"] == ["admin-role"]
+
+    def test_groups_fallback_to_id_token_claim(self, oidc_config, django_request, rsa_keypair):
+        private_key, public_key = rsa_keypair
+        provider = self._login(
+            django_request,
+            private_key,
+            public_key,
+            {"sub": "user-123", "email": "user@example.com"},
+            id_token_overrides={"groups": ["from-id-token"]},
+        )
+        assert provider.user_data["user"]["groups"] == ["from-id-token"]
+
+    def test_missing_groups_claim_defaults_to_empty_list(self, oidc_config, django_request, rsa_keypair):
+        private_key, public_key = rsa_keypair
+        provider = self._login(
+            django_request, private_key, public_key, {"sub": "user-123", "email": "user@example.com"}
+        )
+        assert provider.user_data["user"]["groups"] == []
+
+    def test_string_groups_claim_wrapped_in_list(self, oidc_config, django_request, rsa_keypair):
+        private_key, public_key = rsa_keypair
+        provider = self._login(
+            django_request,
+            private_key,
+            public_key,
+            {"sub": "user-123", "email": "user@example.com", "groups": "solo-group"},
+        )
+        assert provider.user_data["user"]["groups"] == ["solo-group"]
+
+    def test_non_list_non_string_groups_claim_ignored(self, oidc_config, django_request, rsa_keypair):
+        private_key, public_key = rsa_keypair
+        provider = self._login(
+            django_request,
+            private_key,
+            public_key,
+            {"sub": "user-123", "email": "user@example.com", "groups": {"unexpected": "shape"}},
+        )
+        assert provider.user_data["user"]["groups"] == []

@@ -28,16 +28,43 @@ opaque string and never verify it), this is a real OIDC implementation:
 **Enabling it** — set these instance environment variables, then configure the rest from
 the admin console (**God Mode → Authentication → OIDC**):
 
-| Variable             | Purpose                                             |
-| -------------------- | --------------------------------------------------- |
-| `IS_OIDC_ENABLED`    | `1` to turn the provider on                         |
-| `OIDC_ISSUER`        | Your IdP's issuer URL                               |
-| `OIDC_CLIENT_ID`     | Client ID registered with your IdP                  |
-| `OIDC_CLIENT_SECRET` | Client secret                                       |
-| `OIDC_DISPLAY_NAME`  | Label shown on the login button (defaults to "SSO") |
-| `ENABLE_OIDC_SYNC`   | Optional: keep user profile fields in sync on login |
+| Variable                  | Purpose                                                      |
+| ------------------------- | ------------------------------------------------------------ |
+| `IS_OIDC_ENABLED`         | `1` to turn the provider on                                  |
+| `OIDC_ISSUER`             | Your IdP's issuer URL                                        |
+| `OIDC_CLIENT_ID`          | Client ID registered with your IdP                           |
+| `OIDC_CLIENT_SECRET`      | Client secret                                                |
+| `OIDC_DISPLAY_NAME`       | Label shown on the login button (defaults to "SSO")          |
+| `ENABLE_OIDC_SYNC`        | Optional: keep user profile fields in sync on every login    |
+| `OIDC_GROUPS_CLAIM`       | Claim holding the user's groups/roles (defaults to `groups`) |
+| `ENABLE_OIDC_ROLE_SYNC`   | Optional: enable IdP group → workspace role mapping below    |
+| `OIDC_GROUP_ROLE_MAPPING` | JSON array mapping IdP groups to workspace roles             |
 
 Works across the main app, the admin console, and the public "spaces" portal.
+
+### OIDC group → workspace role mapping
+
+Grafana-style auto-provisioning: map an IdP group/role claim to a Plane workspace role,
+applied on every login. Set `ENABLE_OIDC_ROLE_SYNC=1` and `OIDC_GROUP_ROLE_MAPPING` to a
+JSON array of `{group, workspace_slug, role}` entries, e.g.:
+
+```json
+[
+  { "group": "engineering", "workspace_slug": "acme", "role": "admin" },
+  { "group": "support", "workspace_slug": "acme", "role": "guest" }
+]
+```
+
+- `OIDC_GROUPS_CLAIM` names the userinfo/ID-token claim holding the user's groups (varies
+  by IdP — Keycloak, Okta, and Azure AD all name this differently).
+- A matching group **auto-joins** the user to the mapped workspace if they aren't already
+  a member (this is what makes it useful beyond the existing invite flow).
+- The mapping **never downgrades** a role a human admin already set on `WorkspaceMember` —
+  it only assigns a role on first join or raises it if the mapped role is higher, so a
+  manual admin correction is never silently reverted on the next login.
+- Invalid JSON or malformed entries are logged and skipped individually; they never block
+  login.
+- The raw resolved groups list is also stored on `Account.metadata` for auditing.
 
 **Tested against a real IdP** — the automated suite uses real RSA-signed JWTs to exercise
 the actual verification logic (valid/tampered/expired/wrong-audience/nonce-mismatch

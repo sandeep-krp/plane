@@ -181,6 +181,24 @@ oidc_config_variables = [
         "category": "OIDC",
         "is_encrypted": False,
     },
+    {
+        "key": "OIDC_GROUPS_CLAIM",
+        "value": os.environ.get("OIDC_GROUPS_CLAIM", "groups"),
+        "category": "OIDC",
+        "is_encrypted": False,
+    },
+    {
+        "key": "ENABLE_OIDC_ROLE_SYNC",
+        "value": os.environ.get("ENABLE_OIDC_ROLE_SYNC", "0"),
+        "category": "OIDC",
+        "is_encrypted": False,
+    },
+    {
+        "key": "OIDC_GROUP_ROLE_MAPPING",
+        "value": os.environ.get("OIDC_GROUP_ROLE_MAPPING", "[]"),
+        "category": "OIDC",
+        "is_encrypted": False,
+    },
 ]
 
 smtp_config_variables = [

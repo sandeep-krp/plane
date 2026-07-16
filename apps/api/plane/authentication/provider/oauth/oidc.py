@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # See the LICENSE file for details.
 
+import logging
 import os
 from datetime import datetime, timedelta
 from urllib.parse import urlencode, urlparse
@@ -19,6 +20,8 @@ from plane.authentication.adapter.error import (
     AUTHENTICATION_ERROR_CODES,
     AuthenticationException,
 )
+
+logger = logging.getLogger("plane.authentication")
 
 DISCOVERY_CACHE_TIMEOUT = 60 * 60  # 1 hour
 
@@ -61,7 +64,7 @@ class OidcOAuthProvider(OauthAdapter):
     scope = "openid email profile"
 
     def __init__(self, request, code=None, state=None, nonce=None, callback=None):
-        (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET) = get_configuration_value(
+        (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_GROUPS_CLAIM) = get_configuration_value(
             [
                 {
                     "key": "OIDC_ISSUER",
@@ -75,8 +78,13 @@ class OidcOAuthProvider(OauthAdapter):
                     "key": "OIDC_CLIENT_SECRET",
                     "default": os.environ.get("OIDC_CLIENT_SECRET"),
                 },
+                {
+                    "key": "OIDC_GROUPS_CLAIM",
+                    "default": os.environ.get("OIDC_GROUPS_CLAIM", "groups"),
+                },
             ]
         )
+        self.groups_claim = OIDC_GROUPS_CLAIM or "groups"
 
         if not (OIDC_ISSUER and OIDC_CLIENT_ID and OIDC_CLIENT_SECRET):
             raise AuthenticationException(
@@ -194,6 +202,24 @@ class OidcOAuthProvider(OauthAdapter):
             }
         )
 
+    def __extract_groups(self, user_info_response):
+        """Read the configured groups/roles claim from the userinfo response, falling
+        back to the verified ID token (some IdPs only include it there depending on
+        which scopes were granted to the userinfo endpoint)."""
+        raw_groups = user_info_response.get(self.groups_claim)
+        if raw_groups is None:
+            raw_groups = self.__id_token_claims.get(self.groups_claim)
+
+        if raw_groups is None:
+            return []
+        if isinstance(raw_groups, str):
+            return [raw_groups]
+        if isinstance(raw_groups, list):
+            return [str(group) for group in raw_groups]
+
+        logger.warning("OIDC groups claim %r has an unexpected shape, ignoring: %r", self.groups_claim, raw_groups)
+        return []
+
     def set_user_data(self):
         user_info_response = self.get_user_response()
 
@@ -227,6 +253,7 @@ class OidcOAuthProvider(OauthAdapter):
                     "first_name": user_info_response.get("given_name") or user_info_response.get("name") or "",
                     "last_name": user_info_response.get("family_name") or "",
                     "is_password_autoset": True,
+                    "groups": self.__extract_groups(user_info_response),
                 },
             }
         )
