@@ -45,6 +45,12 @@ tokens, etc.), and the full login flow was additionally driven end-to-end agains
 Keycloak instance (no mocking) to confirm the real redirect chain, token verification,
 and session creation all work together.
 
+## Fixed
+
+- The members-list "Authentication" column was blank for OIDC users — the display-label
+  map for login mediums never had an `oidc` entry, even though the type, the backend, and
+  the column renderer all already handled it correctly.
+
 ## Getting it
 
 ### Docker images
