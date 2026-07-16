@@ -62,6 +62,10 @@ JSON array of `{group, workspace_slug, role}` entries, e.g.:
 - The mapping **never downgrades** a role a human admin already set on `WorkspaceMember` —
   it only assigns a role on first join or raises it if the mapped role is higher, so a
   manual admin correction is never silently reverted on the next login.
+- All three settings are editable from **God Mode → Authentication → OIDC** — but only
+  after they've been seeded once from the matching env vars (the instance-configuration
+  API only updates existing settings, it can't create new ones), so set them as env vars
+  on your first deploy after upgrading, then manage them from God Mode from then on.
 - Invalid JSON or malformed entries are logged and skipped individually; they never block
   login.
 - The raw resolved groups list is also stored on `Account.metadata` for auditing.
