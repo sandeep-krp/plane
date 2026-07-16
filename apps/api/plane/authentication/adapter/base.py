@@ -273,8 +273,12 @@ class Adapter:
         # Set display name
         user.display_name = display_name
 
-        # Download and upload avatar only if the avatar is different from the one in the storage
-        avatar = self.user_data.get("user", {}).get("avatar", "")
+        # Download and upload avatar only if the avatar is different from the one in the storage.
+        # `avatar` may be present but None (provider sent no picture/avatar claim) — the
+        # `.get(..., "")` default only covers a missing key, so normalize None too; User.avatar
+        # is a NOT NULL column, and this previously never ran in practice because of the
+        # is_signup gating bug above, so this went unnoticed until sync started firing on login.
+        avatar = self.user_data.get("user", {}).get("avatar") or ""
         # Delete the old avatar if it exists
         self.delete_old_avatar(user=user)
         avatar_asset = self.download_and_upload_avatar(avatar_url=avatar, user=user)
@@ -296,8 +300,8 @@ class Adapter:
 
         # Check if the user is present
         user = User.objects.filter(email=email).first()
-        # Check if sign up case or login
-        is_signup = bool(user)
+        # Check if sign up case or login: True only when we're about to create a new user
+        is_signup = not bool(user)
         # If user is not present, create a new user
         if not user:
             # New user

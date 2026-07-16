@@ -50,6 +50,11 @@ and session creation all work together.
 - The members-list "Authentication" column was blank for OIDC users — the display-label
   map for login mediums never had an `oidc` entry, even though the type, the backend, and
   the column renderer all already handled it correctly.
+- `ENABLE_OIDC_SYNC` (and its Google/GitHub/GitLab/Gitea equivalents) never actually
+  re-synced profile fields on repeat logins — an inverted `is_signup` check meant the sync
+  path only ran on first-time account creation, the opposite of "on every login." Fixing
+  that also surfaced a related bug where the sync could crash on a `NOT NULL` avatar
+  constraint whenever the IdP sends no avatar/picture claim — fixed alongside it.
 
 ## Getting it
 
