@@ -3,6 +3,8 @@
 # See the LICENSE file for details.
 
 # Python imports
+import logging
+import os
 import uuid
 
 # Django import
@@ -14,12 +16,21 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from plane.authentication.provider.oauth.oidc import OidcOAuthProvider
 from plane.authentication.utils.login import user_login
 from plane.license.models import Instance
+from plane.license.utils.instance_value import get_configuration_value
 from plane.authentication.utils.host import base_host
 from plane.authentication.adapter.error import (
     AuthenticationException,
     AUTHENTICATION_ERROR_CODES,
 )
 from plane.utils.path_validator import get_safe_redirect_url, validate_next_path, get_allowed_hosts
+
+logger = logging.getLogger("plane.authentication")
+
+
+def _configured_oidc_issuer():
+    """Best-effort lookup of the configured OIDC issuer, for diagnostic logging only."""
+    (issuer,) = get_configuration_value([{"key": "OIDC_ISSUER", "default": os.environ.get("OIDC_ISSUER")}])
+    return issuer
 
 
 class OIDCOauthInitiateSpaceEndpoint(View):
@@ -61,8 +72,20 @@ class OIDCCallbackSpaceEndpoint(View):
         code = request.GET.get("code")
         state = request.GET.get("state")
         next_path = request.session.get("next_path")
+        expected_state = request.session.get("state", "")
 
-        if state != request.session.get("state", ""):
+        if state != expected_state:
+            logger.warning(
+                "OIDC callback (space) rejected: state mismatch",
+                extra={
+                    "provider": "oidc",
+                    "issuer": _configured_oidc_issuer(),
+                    "code_present": bool(code),
+                    "state_present": bool(state),
+                    "expected_state_present": bool(expected_state),
+                    "expected_state_prefix": expected_state[:8] if expected_state else None,
+                },
+            )
             exc = AuthenticationException(
                 error_code=AUTHENTICATION_ERROR_CODES["OIDC_OAUTH_PROVIDER_ERROR"],
                 error_message="OIDC_OAUTH_PROVIDER_ERROR",
@@ -73,6 +96,15 @@ class OIDCCallbackSpaceEndpoint(View):
             )
             return HttpResponseRedirect(url)
         if not code:
+            logger.warning(
+                "OIDC callback (space) rejected: missing code",
+                extra={
+                    "provider": "oidc",
+                    "issuer": _configured_oidc_issuer(),
+                    "code_present": False,
+                    "state_present": bool(state),
+                },
+            )
             exc = AuthenticationException(
                 error_code=AUTHENTICATION_ERROR_CODES["OIDC_OAUTH_PROVIDER_ERROR"],
                 error_message="OIDC_OAUTH_PROVIDER_ERROR",
