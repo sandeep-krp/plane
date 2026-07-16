@@ -20,6 +20,7 @@ COPY plane/authentication/adapter/error.py plane/authentication/adapter/error.py
 COPY plane/authentication/adapter/oauth.py plane/authentication/adapter/oauth.py
 COPY plane/authentication/provider/oauth/oidc.py plane/authentication/provider/oauth/oidc.py
 COPY plane/authentication/urls.py plane/authentication/urls.py
+COPY plane/authentication/utils/oidc_group_mapping.py plane/authentication/utils/oidc_group_mapping.py
 COPY plane/authentication/views/__init__.py plane/authentication/views/__init__.py
 COPY plane/authentication/views/app/oidc.py plane/authentication/views/app/oidc.py
 COPY plane/authentication/views/space/oidc.py plane/authentication/views/space/oidc.py
