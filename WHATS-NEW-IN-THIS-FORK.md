@@ -5,7 +5,7 @@ This is a fork of [makeplane/plane](https://github.com/makeplane/plane), maintai
 release-for-release and adds features on top. Everything not listed below behaves
 exactly like upstream Plane — same UI, same data model, same self-hosting docs.
 
-Currently based on upstream **[v1.3.1](https://github.com/makeplane/plane/releases/tag/v1.3.1)**
+Currently based on upstream **[v1.4.2](https://github.com/makeplane/plane/releases/tag/v1.4.2)**
 (see [`.upstream-version`](./.upstream-version) for the exact version this fork is built
 against at any given time).
 
@@ -98,7 +98,7 @@ and session creation all work together.
 ### Docker images
 
 Prebuilt images for all six components are published to GitHub Container Registry
-under one consistent tag, `<upstream-version>-oidc.<n>` (e.g. `v1.3.1-oidc.1`):
+under one consistent tag, `<upstream-version>-oidc.<n>` (e.g. `v1.4.2-oidc.1`):
 
 - `ghcr.io/sandeep-krp/plane-frontend`
 - `ghcr.io/sandeep-krp/plane-admin`
@@ -125,7 +125,7 @@ Same as upstream: see [`docker-compose.yml`](./docker-compose.yml) and
 
 ## How this fork stays current
 
-A scheduled workflow checks for new upstream releases, reapplies this fork's changes on
-top, runs the OIDC test suite, and opens a PR for review — see
+A scheduled workflow checks for new upstream releases, reapplies this fork's OIDC series
+on top, runs the OIDC test suite, and opens a PR for review — see
 [`.github/workflows/sync-upstream.yml`](./.github/workflows/sync-upstream.yml) and
 [`.github/workflows/build-images.yml`](./.github/workflows/build-images.yml).

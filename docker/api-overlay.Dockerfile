@@ -7,8 +7,8 @@
 #
 # Build (from repo root):
 #   docker build -f docker/api-overlay.Dockerfile \
-#     --build-arg PLANE_BACKEND_TAG=v1.3.1 \
-#     -t plane-backend:v1.3.1-oidc.1 apps/api
+#     --build-arg PLANE_BACKEND_TAG=v1.4.2 \
+#     -t plane-backend:v1.4.2-oidc.1 apps/api
 
 ARG PLANE_BACKEND_TAG
 FROM makeplane/plane-backend:${PLANE_BACKEND_TAG}
@@ -24,8 +24,7 @@ COPY plane/authentication/utils/oidc_group_mapping.py plane/authentication/utils
 COPY plane/authentication/views/__init__.py plane/authentication/views/__init__.py
 COPY plane/authentication/views/app/oidc.py plane/authentication/views/app/oidc.py
 COPY plane/authentication/views/space/oidc.py plane/authentication/views/space/oidc.py
-COPY plane/db/migrations/0122_account_add_oidc_provider.py plane/db/migrations/0122_account_add_oidc_provider.py
+COPY plane/db/migrations/0123_account_add_oidc_provider.py plane/db/migrations/0123_account_add_oidc_provider.py
 COPY plane/db/models/user.py plane/db/models/user.py
 COPY plane/license/api/views/instance.py plane/license/api/views/instance.py
-COPY plane/license/management/commands/configure_instance.py plane/license/management/commands/configure_instance.py
 COPY plane/utils/instance_config_variables/core.py plane/utils/instance_config_variables/core.py
