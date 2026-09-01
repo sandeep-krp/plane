@@ -1,0 +1,209 @@
+name: Sync with upstream
+
+# Checks makeplane/plane for a new release tag and, if one is found, rebases the
+# fork's OIDC feature onto it, fixes up the migration number if upstream has since
+# added its own migrations, runs the OIDC test suite, and opens a PR for review.
+# Never merges or pushes images itself.
+#
+# The OIDC feature lives as a series of commits on this fork's `main` branch, not a
+# single commit. The old version of this workflow pinned one OIDC_COMMIT SHA and
+# cherry-picked just that commit, so a sync silently dropped the later OIDC fixes
+# (group-role mapping, nested claims, error-code surfacing, is_signup fix, ...).
+# This version instead cherry-picks *all* commits that `main` carries on top of the
+# last-synced upstream tag, restricted to the paths the OIDC feature touches, then
+# re-applies the fork's infrastructure files (workflows / Docker overlay / docs)
+# from `main` verbatim, since those are upstream-agnostic.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # every Monday
+  workflow_dispatch:
+
+env:
+  UPSTREAM_REPO: https://github.com/makeplane/plane.git
+  # Paths the OIDC feature touches. The sync cherry-picks commits that modify any
+  # of these; everything else that forks `main` (upstream-inherited workflows etc.)
+  # stays upstream-agnostic and is NOT carried across by a commit cherry-pick.
+  OIDC_PATHS: >-
+    apps/api/plane/authentication
+    apps/api/plane/db/models/user.py
+    apps/api/plane/license/api/views/instance.py
+    apps/api/plane/utils/instance_config_variables/core.py
+    packages/types/src/instance
+    packages/constants/src/auth
+    apps/web/helpers/authentication.helper.tsx
+    apps/web/core/hooks/oauth
+    apps/space/hooks/oauth
+    apps/admin/hooks/oauth
+    apps/admin/app/\(all\)/\(dashboard\)/authentication
+    apps/admin/components/common/header
+    apps/admin/app/routes.ts
+    docker-compose-local.yml
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: plane
+          POSTGRES_PASSWORD: plane
+          POSTGRES_DB: plane
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U plane"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream --tags
+
+      - name: Check for a new upstream release
+        id: check
+        run: |
+          LATEST_UPSTREAM_TAG="$(git tag --list 'v*' --merged upstream/preview --sort=-v:refname | head -n1)"
+          CURRENT_TAG="$(cat .upstream-version)"
+          echo "latest_upstream_tag=${LATEST_UPSTREAM_TAG}" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST_UPSTREAM_TAG" = "$CURRENT_TAG" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create sync branch and cherry-pick the OIDC series
+        if: steps.check.outputs.up_to_date == 'false'
+        id: cherry-pick
+        continue-on-error: true
+        run: |
+          NEW_TAG="${{ steps.check.outputs.latest_upstream_tag }}"
+          CURRENT_TAG="$(cat .upstream-version)"
+          BRANCH="sync/${NEW_TAG}"
+          git checkout -b "$BRANCH" "$NEW_TAG"
+
+          # The OIDC commits are exactly those in CURRENT_TAG..main that touch the
+          # OIDC paths, in chronological order. Cherry-pick them all.
+          git log --reverse --format='%H' "${CURRENT_TAG}..main" -- $OIDC_PATHS \
+            > /tmp/oidc-commits.txt
+          while read -r c; do
+            git cherry-pick -x "$c" --allow-empty
+          done < /tmp/oidc-commits.txt
+
+      - name: Carry fork infrastructure files from main
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          for f in \
+            .github/workflows/build-images.yml \
+            .github/workflows/sync-upstream.yml \
+            docker/api-overlay.Dockerfile \
+            WHATS-NEW-IN-THIS-FORK.md
+          do
+            git checkout main -- "$f"
+          done
+
+      - name: Remove inherited upstream workflows this fork doesn't need
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          # Keep only the two fork workflows; drop upstream's workflows that need
+          # secrets/infra this fork doesn't have (they'd fail on every push/PR).
+          for wf in .github/workflows/*.yml; do
+            case "$(basename "$wf")" in
+              build-images.yml|sync-upstream.yml) ;;
+              *) git rm -q "$wf" ;;
+            esac
+          done
+
+      - name: Renumber OIDC migration if it now collides
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          MIGRATIONS_DIR="apps/api/plane/db/migrations"
+          OIDC_MIGRATION="$(ls "$MIGRATIONS_DIR" | grep account_add_oidc_provider)"
+          OIDC_NUMBER="${OIDC_MIGRATION%%_*}"
+          HIGHEST_OTHER="$(ls "$MIGRATIONS_DIR" | grep -v account_add_oidc_provider | grep -E '^[0-9]{4}_' | sort | tail -n1)"
+          HIGHEST_NUMBER="${HIGHEST_OTHER%%_*}"
+
+          if [ -n "$HIGHEST_OTHER" ] && [ "$OIDC_NUMBER" -le "$HIGHEST_NUMBER" ] 2>/dev/null; then
+            NEXT_NUMBER=$(printf "%04d" $((10#$HIGHEST_NUMBER + 1)))
+            NEW_NAME="${NEXT_NUMBER}_account_add_oidc_provider.py"
+            HIGHEST_MODULE="${HIGHEST_OTHER%.py}"
+
+            git mv "$MIGRATIONS_DIR/$OIDC_MIGRATION" "$MIGRATIONS_DIR/$NEW_NAME"
+            sed -i "s/\"[0-9]\{4\}_[a-z0-9_]*\")\],$/\"${HIGHEST_MODULE}\")],/" "$MIGRATIONS_DIR/$NEW_NAME" || true
+            echo "Renumbered OIDC migration to ${NEW_NAME} — verify its dependencies tuple by hand." >> "$GITHUB_STEP_SUMMARY"
+            git add -A
+            git commit -m "Renumber OIDC migration after upstream sync" --allow-empty
+          fi
+
+      - name: Set up Python
+        if: steps.check.outputs.up_to_date == 'false'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.x"
+          cache: "pip"
+          cache-dependency-path: "apps/api/requirements.txt"
+
+      - name: Install API + test dependencies
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          cd apps/api
+          pip install -r requirements.txt -r requirements/test.txt
+
+      - name: Run OIDC + full auth test suite
+        if: steps.check.outputs.up_to_date == 'false'
+        working-directory: apps/api
+        env:
+          POSTGRES_USER: plane
+          POSTGRES_PASSWORD: plane
+          POSTGRES_DB: plane
+          DATABASE_URL: postgres://plane:***@localhost:5432/plane
+          SECRET_KEY: sync-workflow-test-secret
+        run: |
+          pytest plane/tests/unit/authentication/test_oidc_provider.py \
+                 plane/tests/unit/authentication/test_oidc_group_mapping.py \
+                 plane/tests/contract/app/test_oidc_authentication.py \
+                 plane/tests/ -k authentication
+
+      - name: Bump synced upstream version
+        if: steps.check.outputs.up_to_date == 'false'
+        run: |
+          echo "${{ steps.check.outputs.latest_upstream_tag }}" > .upstream-version
+          git add .upstream-version
+          git commit -m "Bump synced upstream version to ${{ steps.check.outputs.latest_upstream_tag }}" --allow-empty
+
+      - name: Commit resolved files if cherry-pick was dirty
+        if: steps.cherry-pick.outcome == 'success'
+        run: git add -A && git commit -m "Resolve OIDC rebase against ${{ steps.check.outputs.latest_upstream_tag }}" --allow-empty || true
+
+      - name: Push sync branch
+        if: steps.check.outputs.up_to_date == 'false'
+        run: git push origin "sync/${{ steps.check.outputs.latest_upstream_tag }}" --force
+
+      - name: Open PR
+        if: steps.check.outputs.up_to_date == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_TAG="${{ steps.check.outputs.latest_upstream_tag }}"
+          if [ "${{ steps.cherry-pick.outcome }}" = "success" ]; then
+            BODY="Rebased the full OIDC series onto ${NEW_TAG} and ran the OIDC + auth test suite. Review the diff, then merge and tag a release (e.g. \\`${NEW_TAG}-oidc.1\\`)."
+          else
+            BODY="Cherry-picking the OIDC series onto ${NEW_TAG} hit conflicts — this branch has them unresolved. Resolve manually, re-run tests, then merge."
+          fi
+          gh pr create \
+            --title "Sync OIDC fork onto upstream ${NEW_TAG}" \
+            --body "$BODY" \
+            --base main \
+            --head "sync/${NEW_TAG}" || true
