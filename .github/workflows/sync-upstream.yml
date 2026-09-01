@@ -177,7 +177,7 @@ jobs:
           POSTGRES_USER: plane
           POSTGRES_PASSWORD: plane
           POSTGRES_DB: plane
-          DATABASE_URL: postgres://plane:***@localhost:5432/plane
+          DATABASE_URL: postgres://plane:plane@localhost:5432/plane
           REDIS_URL: redis://localhost:6379/0
           SECRET_KEY: sync-workflow-test-secret
         run: |
